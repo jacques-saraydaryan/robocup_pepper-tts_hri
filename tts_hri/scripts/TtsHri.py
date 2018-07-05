@@ -167,6 +167,7 @@ class TtsHri:
 
             #start text to speech
             try :
+
                 rospy.loginfo("TTS: text to say:%s",str(goal.txt))
                 if isWaitForResult:
                     self._status=self.WAIT_END_STATUS
@@ -196,7 +197,7 @@ class TtsHri:
 
 if __name__ == "__main__":
     rospy.init_node('pepper_tts_hri')
-    ip=rospy.get_param('~ip',"192.168.0.147")
+    ip=rospy.get_param('~ip',"10.1.124.246")
     port=rospy.get_param('~port',9559)
    
     
