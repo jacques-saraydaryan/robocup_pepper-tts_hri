@@ -10,6 +10,7 @@ import json
 import actionlib
 from robocup_msgs.msg import gm_bus_msg
 from tts_hri.msg import TtsHriAction
+from threading import Timer
 
 ######### Command to Test
 ## 
@@ -19,6 +20,7 @@ from tts_hri.msg import TtsHriAction
 
 class TtsHri:
     TTS_ACTION="TTS"
+    ANIMATED_TTS_ACTION="ANIMATED_TTS"
     NO_WAIT_END_MODE="NO_WAIT_END"
     WAIT_END_MODE="WAIT_END"
     WAIT_END_STATUS="WAIT_END_STATUS"
@@ -52,13 +54,22 @@ class TtsHri:
         # Say Emile in english
         self._tts.say("Ready to receive general manager order")
 
+        self._animated_tts = self._session.service("ALAnimatedSpeech")
+
+        # set the local configuration
+        self.animated_tts_configuration = {"bodyLanguageMode":"contextual"}
+
         self._memory = self._session.service("ALMemory")
         #NOT WORK ???
         #self.subscriber = self._memory.subscriber("ALTextToSpeech/TextDone")
         #self.subscriber.signal.connect(self.onTextDone)
 
         self.subscriber2 = self._memory.subscriber("ALTextToSpeech/Status")
+        self.subscriberAnimatedSpeechEnd= self._memory.subscriber("ALAnimatedSpeech/EndOfAnimatedSpeech")
         self.subscriber2.signal.connect(self.onTextStatus)
+        self.subscriberAnimatedSpeechEnd.signal.connect(self.onEndAnimatedSpeech)
+
+
         return True
 
     def configure(self):
@@ -78,7 +89,7 @@ class TtsHri:
     ###
     def gmBusListener(self,msg):
         # check current order is TTS
-        if msg.action== self.TTS_ACTION:
+        if msg.action== self.TTS_ACTION or msg.action== self.ANIMATED_TTS_ACTION:
 
             #check if current session is connected
             if not self._session.isConnected():
@@ -87,6 +98,8 @@ class TtsHri:
 
             #register current order
             self._currentOrder=msg
+            
+            
             #stop all previous TTS
             self._tts.stopAll()
 
@@ -102,10 +115,15 @@ class TtsHri:
                 
             #start text to speech
             try :
-                rospy.loginfo("TTS: text to say:%s",str(payloadObj.txt))
+               
                 if isWaitForResult:
                     self._status=self.WAIT_END_STATUS
-                self._tts.say(payloadObj.txt, payloadObj.lang)
+                if msg.action==self.ANIMATED_TTS_ACTION:
+                     rospy.loginfo("ANIMATED_TTS: text to say:%s",str(payloadObj.txt))
+                     self._animated_tts.say(payloadObj.txt,self.animated_tts_configuration)
+                else:
+                    rospy.loginfo("TTS: text to say:%s",str(payloadObj.txt))
+                    self._tts.say(payloadObj.txt, payloadObj.lang)
             except RuntimeError:
                 rospy.logwarn(str(payloadObj.lang)+" language is not installed, please install it to have a "+str(payloadObj.lang)+" pronunciation.")
                 self._tts.say(payloadObj.txt, "English")
@@ -128,14 +146,29 @@ class TtsHri:
     #         self._currentOrder=None
              
     def onTextStatus(self,status):
-        print str(status)+'\n'
+        #print str(status)+'\n'
         if self._status==self.WAIT_END_STATUS:
+             self._timeout_checker=True
              if status[1]=='done':
+                if self._currentOrder != None :
+                    self._currentOrder.result=3
+                    rospy.loginfo("TTS: text Done")
+                    self._gm_bus_pub.publish(self._currentOrder)
+                    self._status=self.NONE_STATUS
+                    self._currentOrder=None
+   
+    def onEndAnimatedSpeech(self,status):
+        print str(status)
+        if self._status==self.WAIT_END_STATUS:
+             self._timeout_checker=True
+             #if status[1]=='done':
+             if self._currentOrder != None :
                 self._currentOrder.result=3
-                rospy.loginfo("TTS: text Done")
+                rospy.loginfo("Animated Speech End: text Done")
                 self._gm_bus_pub.publish(self._currentOrder)
                 self._status=self.NONE_STATUS
                 self._currentOrder=None
+
 
     def processPayload(self,payload):
         try:
@@ -168,10 +201,16 @@ class TtsHri:
             #start text to speech
             try :
 
-                rospy.loginfo("TTS: text to say:%s",str(goal.txt))
+                
                 if isWaitForResult:
                     self._status=self.WAIT_END_STATUS
-                self._tts.say(goal.txt, goal.lang)
+                if goal.action == self.ANIMATED_TTS_ACTION:
+                    rospy.loginfo("ANIMATED_TTS: text to say:%s",str(goal.txt))
+                    self._tts.setLanguage(goal.lang)
+                    self._animated_tts.say(goal.txt,self.animated_tts_configuration)
+                else:
+                    rospy.loginfo("TTS: text to say:%s",str(goal.txt))
+                    self._tts.say(goal.txt, goal.lang)
             except RuntimeError:
                 rospy.logwarn(str(goal.lang)+" language is not installed, please install it to have a "+str(goal.lang)+" pronunciation.")
                 self._tts.say(goal.txt, "English")
@@ -181,7 +220,7 @@ class TtsHri:
                 # set a timer
                 # check if event trigged if yes return success
                 self.timeout_checker=False
-                self._t_timer = Timer(_maxWaitTimePerCall, self._timeout_checker)
+                self._t_timer = Timer(self._maxWaitTimePerCall, self._timeout_checker)
                 self._t_timer.start()
                 while not self.timeout_checker:
                     rospy.sleep(0.1)
@@ -197,7 +236,7 @@ class TtsHri:
 
 if __name__ == "__main__":
     rospy.init_node('pepper_tts_hri')
-    ip=rospy.get_param('~ip',"10.1.124.246")
+    ip=rospy.get_param('~ip',"192.168.0.189")
     port=rospy.get_param('~port',9559)
    
     
